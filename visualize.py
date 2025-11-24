@@ -30,13 +30,15 @@ def export_csv(root: Path, files: List[FileMetrics], buckets: List[TimeBucketMet
 
     # prs.csv
     with (reports_dir / "prs.csv").open("w", encoding="utf-8") as f:
-        f.write("id,files_touched,loc_added,ai_debt_delta,ai_risk_index,top_files\n")
+        f.write("id,files_touched,loc_added,ai_debt_delta,ai_risk_index,semantic_drift,top_files\n")
         for p in prs:
             top = ";".join(p.top_files)
             f.write(
                 f"{p.identifier},{p.files_touched},{p.loc_added},"
-                f"{p.ai_debt_delta:.3f},{p.ai_risk_index:.3f},{top}\n"
+                f"{p.ai_debt_delta:.3f},{p.ai_risk_index:.3f},"
+                f"{p.semantic_drift:.3f},{top}\n"
             )
+
 
     return reports_dir
 
@@ -109,210 +111,214 @@ def render_html(
     prs_sorted = sorted(prs, key=lambda p: p.ai_risk_index, reverse=True)
     pr_ids = [p.identifier for p in prs_sorted]
     pr_risks = [p.ai_risk_index for p in prs_sorted]
+    pr_drifts = [p.semantic_drift for p in prs_sorted]
 
     # ------------------------------------------------------------------
     # HTML
     # ------------------------------------------------------------------
+    # Precompute JSON strings so we can safely concat into a plain Python string.
+    modules_js = json.dumps(modules)
+    module_values_js = json.dumps(module_values)
+    filesdata_js = json.dumps(file_rows)
+    bucket_labels_js = json.dumps(bucket_labels)
+    bucket_debt_js = json.dumps(bucket_debt)
+    pr_ids_js = json.dumps(pr_ids)
+    pr_risks_js = json.dumps(pr_risks)
+    pr_drifts_js = json.dumps(pr_drifts)
+
     with html_path.open("w", encoding="utf-8") as f:
-        f.write(
-            f"""<!DOCTYPE html>
-<html>
-<head>
-  <meta charset="utf-8" />
-  <title>AI Tech Debt Report</title>
-  <script src="https://cdn.plot.ly/plotly-latest.min.js"></script>
-  <style>
-    body {{ font-family: sans-serif; margin: 20px; }}
-    .chart {{ width: 100%; max-width: 1000px; height: 400px; margin-bottom: 40px; }}
-    .detail {{ width: 100%; max-width: 1000px; margin-top: 10px; margin-bottom: 40px; }}
-    .detail-table {{ border-collapse: collapse; width: 100%; }}
-    .detail-table th, .detail-table td {{
-      border: 1px solid #ddd;
-      padding: 6px 8px;
-      font-size: 12px;
-      text-align: left;
-    }}
-    .detail-table th {{
-      background: #f5f5f5;
-      font-weight: 600;
-    }}
-    .detail-table tr.high-risk {{ background-color: #ffe5e5; }}
-    .detail-table tr.mid-risk {{ background-color: #fff4e0; }}
-    .detail-table tr.low-risk {{ background-color: #f8f8f8; }}
-  </style>
-</head>
-<body>
-  <h1>AI 技术债热力图 & 趋势</h1>
-
-  <h2>模块 AI 技术债分布（热力图）</h2>
-  <div id="heatmap" class="chart"></div>
-  <div id="module-detail" class="detail">
-    <p>💡 点击上面的任意模块，可以查看该模块内部 AI 债务最高的 Top 10 文件。</p>
-  </div>
-
-  <h2>AI 债务趋势（按时间）</h2>
-  <div id="timeline" class="chart"></div>
-
-  <h2>PR 风险指数 Top</h2>
-  <div id="prrisk" class="chart"></div>
-
-  <script>
-    // Data injected from Python
-    var modules = {json.dumps(modules)};
-    var moduleValues = {json.dumps(module_values)};
-    var filesData = {json.dumps(file_rows)};
-    var bucketLabels = {json.dumps(bucket_labels)};
-    var bucketDebt = {json.dumps(bucket_debt)};
-    var prIds = {json.dumps(pr_ids)};
-    var prRisks = {json.dumps(pr_risks)};
-
-    // Heatmap
-    var heatData = [{{
-      x: modules,
-      y: ["AI Debt"],
-      z: [moduleValues],
-      type: 'heatmap',
-      colorscale: 'Reds',
-      hovertemplate: "模块: {{x}}<br>平均 AI 债务: {{z:.2f}}<extra></extra>"
-    }}];
-
-    var heatLayout = {{
-      title: 'Module AI Tech Debt Heatmap',
-      xaxis: {{ automargin: true }},
-      yaxis: {{ automargin: true }}
-    }};
-
-    Plotly.newPlot('heatmap', heatData, heatLayout);
-
-    // Drill-down
-    function renderModuleDetail(moduleName) {{
-      var container = document.getElementById('module-detail');
-
-      var rows = filesData.filter(function (f) {{
-        return f.module === moduleName;
-      }});
-
-      if (!rows.length) {{
-        container.innerHTML = "<h3>模块 " + moduleName + "</h3><p>未找到文件。</p>";
-        return;
-      }}
-
-      rows.sort(function (a, b) {{
-        return b.ai_debt - a.ai_debt;
-      }});
-
-      var top = rows.slice(0, 10);
-
-      var dupSum = 0, apiSum = 0, overSum = 0, absSum = 0, silentSum = 0, avgDebt = 0;
-      top.forEach(function (r) {{
-        dupSum += r.dup;
-        apiSum += r.api;
-        overSum += r.over_eng;
-        absSum += r.unnecessary_abs;
-        silentSum += r.silent;
-        avgDebt += r.ai_debt;
-      }});
-      avgDebt = avgDebt / top.length;
-
-      var summary = `
-        <h3>模块 ${'{'}moduleName{'}'} · Top 10 AI 债务文件</h3>
-        <p>
-          综合评语：该模块在 Top 10 文件中，共检测到
-          <b>${'{'}dupSum{'}'}</b> 次重复代码，
-          <b>${'{'}silentSum{'}'}</b> 个 silent failure，
-          <b>${'{'}overSum{'}'}</b> 个过度工程 wrapper，
-          <b>${'{'}absSum{'}'}</b> 个不必要抽象，
-          <b>${'{'}apiSum{'}'}</b> 个 API 幻觉。
-          平均 AI 债务分数约为 <b>${'{'}avgDebt.toFixed(2){'}'}</b>。
-          这些特征非常符合“AI 放大技术债”的典型模式。
-        </p>
-      `;
-
-      var tableRows = top.map(function (r, idx) {{
-        var riskClass = "low-risk";
-        var riskLabel = "";
-        if (r.ai_debt > 0.8) {{
-          riskClass = "high-risk";
-          riskLabel = "🔥 AI 屎山候选";
-        }} else if (r.ai_debt > 0.6) {{
-          riskClass = "mid-risk";
-          riskLabel = "⚠ 需要关注";
-        }}
-
-        return `
-          <tr class="${'{'}riskClass{'}'}">
-            <td>${'{'}idx + 1{'}'}</td>
-            <td>${'{'}r.path{'}'}</td>
-            <td>${'{'}r.ai_debt.toFixed(2){'}'}</td>
-            <td>${'{'}riskLabel{'}'}</td>
-            <td>${'{'}r.dup{'}'}</td>
-            <td>${'{'}r.api{'}'}</td>
-            <td>${'{'}r.over_eng{'}'}</td>
-            <td>${'{'}r.unnecessary_abs{'}'}</td>
-            <td>${'{'}r.silent{'}'}</td>
-          </tr>
-        `;
-      }}).join("");
-
-      var tableHtml = `
-        ${'{'}summary{'}'}
-        <table class="detail-table">
-          <thead>
-            <tr>
-              <th>#</th>
-              <th>File</th>
-              <th>AI Debt</th>
-              <th>标记</th>
-              <th>重复</th>
-              <th>API 幻觉</th>
-              <th>过度工程</th>
-              <th>不必要抽象</th>
-              <th>Silent Failure</th>
-            </tr>
-          </thead>
-          <tbody>
-            ${'{'}tableRows{'}'}
-          </tbody>
-        </table>
-      `;
-
-      container.innerHTML = tableHtml;
-    }}
-
-    var heatDiv = document.getElementById('heatmap');
-    heatDiv.on('plotly_click', function(data) {{
-      if (data.points && data.points.length > 0) {{
-        var moduleName = data.points[0].x;
-        renderModuleDetail(moduleName);
-      }}
-    }});
-
-    if (modules.length > 0) {{
-      renderModuleDetail(modules[0]);
-    }}
-
-    // Timeline
-    var tlData = [{{
-      x: bucketLabels,
-      y: bucketDebt,
-      type: 'scatter',
-      mode: 'lines+markers'
-    }}];
-
-    Plotly.newPlot('timeline', tlData, {{title: 'AI Debt Trend Over Time'}});
-
-    // PR risk
-    var prData = [{{
-      x: prIds,
-      y: prRisks,
-      type: 'bar'
-    }}];
-
-    Plotly.newPlot('prrisk', prData, {{title: 'PR Risk Index'}});
-  </script>
-</body>
-</html>
-"""
+        html = (
+            "<!DOCTYPE html>\n"
+            "<html>\n"
+            "<head>\n"
+            "  <meta charset=\"utf-8\" />\n"
+            "  <title>AI Tech Debt Report</title>\n"
+            "  <script src=\"https://cdn.plot.ly/plotly-latest.min.js\"></script>\n"
+            "  <style>\n"
+            "    body { font-family: sans-serif; margin: 20px; }\n"
+            "    .chart { width: 100%; max-width: 1000px; height: 400px; margin-bottom: 40px; }\n"
+            "    .detail { width: 100%; max-width: 1000px; margin-top: 10px; margin-bottom: 40px; }\n"
+            "    .detail-table { border-collapse: collapse; width: 100%; }\n"
+            "    .detail-table th, .detail-table td {\n"
+            "      border: 1px solid #ddd;\n"
+            "      padding: 6px 8px;\n"
+            "      font-size: 12px;\n"
+            "      text-align: left;\n"
+            "    }\n"
+            "    .detail-table th {\n"
+            "      background: #f5f5f5;\n"
+            "      font-weight: 600;\n"
+            "    }\n"
+            "    .detail-table tr.high-risk { background-color: #ffe5e5; }\n"
+            "    .detail-table tr.mid-risk { background-color: #fff4e0; }\n"
+            "    .detail-table tr.low-risk { background-color: #f8f8f8; }\n"
+            "  </style>\n"
+            "</head>\n"
+            "<body>\n"
+            "  <h1>AI Tech Debt Heatmap & Trend</h1>\n\n"
+            "  <h2>Module AI Debt Distribution (Heatmap)</h2>\n"
+            "  <div id=\"heatmap\" class=\"chart\"></div>\n"
+            "  <div id=\"module-detail\" class=\"detail\">\n"
+            "    <p>💡 Click any module above to see its top 10 highest-debt files.</p>\n"
+            "  </div>\n\n"
+            "  <h2>AI Debt Trend Over Time</h2>\n"
+            "  <div id=\"timeline\" class=\"chart\"></div>\n\n"
+            "  <h2>PR Risk Index (Top)</h2>\n"
+            "  <div id=\"prrisk\" class=\"chart\"></div>\n\n"
+            "  <script>\n"
+            "    // Data injected from Python\n"
+            "    var modules = " + modules_js + ";\n"
+            "    var moduleValues = " + module_values_js + ";\n"
+            "    var filesData = " + filesdata_js + ";\n"
+            "    var bucketLabels = " + bucket_labels_js + ";\n"
+            "    var bucketDebt = " + bucket_debt_js + ";\n"
+            "    var prIds = " + pr_ids_js + ";\n"
+            "    var prRisks = " + pr_risks_js + ";\n"
+            "    var prDrifts = " + pr_drifts_js + ";\n\n"
+            "    // Heatmap\n"
+            "    var heatData = [{\n"
+            "      x: modules,\n"
+            "      y: ['AI Debt'],\n"
+            "      z: [moduleValues],\n"
+            "      type: 'heatmap',\n"
+            "      colorscale: 'Reds',\n"
+            "      hovertemplate: \"Module: {x}<br>Avg AI Debt: {z:.2f}<extra></extra>\"\n"
+            "    }];\n\n"
+            "    var heatLayout = {\n"
+            "      title: 'Module AI Tech Debt Heatmap',\n"
+            "      xaxis: { automargin: true },\n"
+            "      yaxis: { automargin: true }\n"
+            "    };\n\n"
+            "    Plotly.newPlot('heatmap', heatData, heatLayout);\n\n"
+            "    // Drill-down\n"
+            "    function renderModuleDetail(moduleName) {\n"
+            "      var container = document.getElementById('module-detail');\n\n"
+            "      var rows = filesData.filter(function (f) {\n"
+            "        return f.module === moduleName;\n"
+            "      });\n\n"
+            "      if (!rows.length) {\n"
+            "        container.innerHTML = \"<h3>Module \" + moduleName + \"</h3><p>No files found.</p>\";\n"
+            "        return;\n"
+            "      }\n\n"
+            "      rows.sort(function (a, b) {\n"
+            "        return b.ai_debt - a.ai_debt;\n"
+            "      });\n\n"
+            "      var top = rows.slice(0, 10);\n\n"
+            "      var dupSum = 0, apiSum = 0, overSum = 0, absSum = 0, silentSum = 0, avgDebt = 0;\n"
+            "      top.forEach(function (r) {\n"
+            "        dupSum += r.dup;\n"
+            "        apiSum += r.api;\n"
+            "        overSum += r.over_eng;\n"
+            "        absSum += r.unnecessary_abs;\n"
+            "        silentSum += r.silent;\n"
+            "        avgDebt += r.ai_debt;\n"
+            "      });\n"
+            "      avgDebt = avgDebt / top.length;\n\n"
+            "      var summary = `\n"
+            "        <h3>Module ${moduleName} · Top 10 Debt Files</h3>\n"
+            "        <p>\n"
+            "          Overall Evaluation - This module detected: \n"
+            "          <b>${dupSum}</b> Duplicate blocks，\n"
+            "          <b>${silentSum}</b> 个 silent failure，\n"
+            "          <b>${overSum}</b> Over-engineering wrappers，\n"
+            "          <b>${absSum}</b> Unnecessary abstractions，\n"
+            "          <b>${apiSum}</b> API hallucinations.\n"
+            "          Avg AI debt score <b>${avgDebt.toFixed(2)}</b>。\n"
+            "        </p>\n"
+            "      `;\n\n"
+            "      var tableRows = top.map(function (r, idx) {\n"
+            "        var riskClass = \"low-risk\";\n"
+            "        var riskLabel = \"\";\n"
+            "        if (r.ai_debt > 0.8) {\n"
+            "          riskClass = \"high-risk\";\n"
+            "          riskLabel = \"🔥 AI High Risk\";\n"
+            "        } else if (r.ai_debt > 0.6) {\n"
+            "          riskClass = \"mid-risk\";\n"
+            "          riskLabel = \"⚠ Moderate Risk\";\n"
+            "        }\n\n"
+            "        return `\n"
+            "          <tr class=\"${riskClass}\">\n"
+            "            <td>${idx + 1}</td>\n"
+            "            <td>${r.path}</td>\n"
+            "            <td>${r.ai_debt.toFixed(2)}</td>\n"
+            "            <td>${riskLabel}</td>\n"
+            "            <td>${r.dup}</td>\n"
+            "            <td>${r.api}</td>\n"
+            "            <td>${r.over_eng}</td>\n"
+            "            <td>${r.unnecessary_abs}</td>\n"
+            "            <td>${r.silent}</td>\n"
+            "          </tr>\n"
+            "        `;\n"
+            "      }).join(\"\");\n\n"
+            "      var tableHtml = `\n"
+            "        ${summary}\n"
+            "        <table class=\"detail-table\">\n"
+            "          <thead>\n"
+            "            <tr>\n"
+            "              <th>#</th>\n"
+            "              <th>File</th>\n"
+            "              <th>AI Debt</th>\n"
+            "              <th>Tag</th>\n"
+            "              <th>Duplicate</th>\n"
+            "              <th>API Hallucination</th>\n"
+            "              <th>Over-engineering</th>\n"
+            "              <th>Unnecessary Abstraction</th>\n"
+            "              <th>Silent Failure</th>\n"
+            "            </tr>\n"
+            "          </thead>\n"
+            "          <tbody>\n"
+            "            ${tableRows}\n"
+            "          </tbody>\n"
+            "        </table>\n"
+            "      `;\n\n"
+            "      container.innerHTML = tableHtml;\n"
+            "    }\n\n"
+            "    var heatDiv = document.getElementById('heatmap');\n"
+            "    heatDiv.on('plotly_click', function(data) {\n"
+            "      if (data.points && data.points.length > 0) {\n"
+            "        var moduleName = data.points[0].x;\n"
+            "        renderModuleDetail(moduleName);\n"
+            "      }\n"
+            "    });\n\n"
+            "    if (modules.length > 0) {\n"
+            "      renderModuleDetail(modules[0]);\n"
+            "    }\n\n"
+            "    // Timeline\n"
+            "    var tlData = [{\n"
+            "      x: bucketLabels,\n"
+            "      y: bucketDebt,\n"
+            "      type: 'scatter',\n"
+            "      mode: 'lines+markers'\n"
+            "    }];\n\n"
+            "    Plotly.newPlot('timeline', tlData, {title: 'AI Debt Trend Over Time'});\n\n"
+            "    // -------------------------------\n"
+            "    // PR Risk + Drift Coloring\n"
+            "    // -------------------------------\n"
+            "    var prData = [{\n"
+            "      x: prIds,\n"
+            "      y: prRisks,\n"
+            "      type: 'bar',\n"
+            "      customdata: prDrifts,  // Apply drift to each bar\n"
+            "      marker: {\n"
+            "        color: prDrifts,\n"
+            "        colorscale: 'RdBu',\n"
+            "        reversescale: true,\n"
+            "        cmin: 0,\n"
+            "        cmax: 1,\n"
+            "        colorbar: { title: 'Semantic Drift' }\n"
+            "      },\n"
+            "      hovertemplate:\n"
+            "        \"PR: %{x}<br>\" +\n"
+            "        \"Risk: %{y:.2f}<br>\" +\n"
+            "        \"Semantic drift: %{customdata:.2f}<extra></extra>\"\n"
+            "    }];\n\n"
+            "    Plotly.newPlot('prrisk', prData, {\n"
+            "      title: 'PR Risk Index (Semantic Drift Colored)'\n"
+            "    });\n\n\n"
+            "  </script>\n"
+            "</body>\n"
+            "</html>\n"
         )
+        f.write(html)
 
     return html_path

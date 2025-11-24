@@ -6,7 +6,7 @@ from typing import List, Dict, Tuple
 
 
 def run_git(args: List[str], cwd: Path) -> str:
-    # 运行 git 命令，返回 stdout
+    # Execute the git command and return the output to stdout.
     result = subprocess.run(
         ["git"] + args,
         cwd=cwd,
@@ -18,7 +18,7 @@ def run_git(args: List[str], cwd: Path) -> str:
 
 
 def list_tracked_files(root: Path, exts: Tuple[str, ...] = (".py",)) -> List[Path]:
-    # 列出被 git 跟踪的指定后缀文件
+    # List files with specified suffixes tracked by Git
     out = run_git(["ls-files"], cwd=root)
     files = []
     for line in out.splitlines():
@@ -29,9 +29,9 @@ def list_tracked_files(root: Path, exts: Tuple[str, ...] = (".py",)) -> List[Pat
 
 
 def get_file_change_stats(root: Path, since: str) -> Dict[str, Dict[str, int]]:
-    """统计自 since 以来每个文件新增/删除的行数。
-    since 格式：'2024-01-01'
-    返回: { "path/to/file.py": {"added": X, "deleted": Y, "total_added": Z} }
+    """Count the number of lines added or deleted in each file since the specified date.
+    since format：'2024-01-01'
+    return: { "path/to/file.py": {"added": X, "deleted": Y, "total_added": Z} }
     """
     # 使用 git log --numstat
     out = run_git(
@@ -48,7 +48,7 @@ def get_file_change_stats(root: Path, since: str) -> Dict[str, Dict[str, int]]:
             continue
         added, deleted, path = parts
         if added == "-" or deleted == "-":
-            # 二进制文件
+            # Binary file
             continue
         try:
             a = int(added)
@@ -62,8 +62,8 @@ def get_file_change_stats(root: Path, since: str) -> Dict[str, Dict[str, int]]:
 
 
 def get_time_buckets(root: Path, since: str, granularity: str = "month"):
-    """按时间桶聚合：
-    返回:
+    """Aggregate by time bucket：
+    return:
     {
         "YYYY-MM": {
             "commits": set([...]),
@@ -85,7 +85,7 @@ def get_time_buckets(root: Path, since: str, granularity: str = "month"):
     current_hash = None
 
     for line in out.splitlines():
-        # 日期+commit 行：YYYY-MM-DD <hash>
+        # Date + commit line：YYYY-MM-DD <hash>
         if line and len(line.split()) == 2 and line[4] == "-":
             date_str, commit_hash = line.split()
             current_date = date_str
@@ -128,7 +128,7 @@ def get_time_buckets(root: Path, since: str, granularity: str = "month"):
 
 
 def get_merge_commits(root: Path, main_branch: str = "main") -> List[str]:
-    """MVP: 用 merge commit 近似 PR"""
+    """MVP: Approximating PRs with merge commits"""
     try_branches = [main_branch, "master"]
     branch = None
     for b in try_branches:
@@ -145,7 +145,7 @@ def get_merge_commits(root: Path, main_branch: str = "main") -> List[str]:
 
 
 def get_merge_diff_stats(root: Path, merge_hash: str) -> Dict[str, int]:
-    """返回某个 merge commit 的每文件新增行数"""
+    """Number of new lines per file in a merge commit"""
     out = run_git(["show", "--numstat", "--format=", merge_hash], cwd=root)
     stats = {}
     for line in out.splitlines():

@@ -2,19 +2,23 @@
 # Author: Cody
 from __future__ import annotations
 
+import pickle
+import subprocess
 from pathlib import Path
 from typing import List, Dict
-import subprocess
 
 from models import TimeBucketMetrics
 from scanner import scan_repo
+
+# Where we cache per-commit snapshot metrics
+CACHE_DIR = Path(".ai_debt_cache")
+CACHE_DIR.mkdir(exist_ok=True)
 
 
 def _run_git(root: Path, args: List[str]) -> str:
     """Run a git command and return stdout as text."""
     result = subprocess.run(
-        ["git"] + args,
-        cwd=root,
+        ["git", "-C", str(root), *args],
         stdout=subprocess.PIPE,
         stderr=subprocess.PIPE,
         text=True,
@@ -41,53 +45,75 @@ def _collect_month_end_commits(root: Path, since: str) -> Dict[str, dict]:
         line = line.strip()
         if not line:
             continue
-        try:
-            sha, date = line.split()
-        except ValueError:
+
+        parts = line.split()
+        if len(parts) != 2:
             # unexpected format, skip
             continue
 
+        sha, date = parts
         month = date[:7]  # "YYYY-MM"
+
         info = month_info.get(month)
         if info is None:
-            # first commit we see in this month
+            # First commit we see in this month.
+            # Because git log is reverse-chronological, this is the *last* commit of that month.
             month_info[month] = {"sha": sha, "count": 1, "date": date}
         else:
-            # commits are in reverse-chronological order by default,
-            # so the *first* one in the month is actually the last commit.
             info["count"] += 1
 
     return month_info
 
 
+def _load_cache(sha: str):
+    path = CACHE_DIR / f"{sha}.pkl"
+    if path.exists():
+        try:
+            with open(path, "rb") as f:
+                return pickle.load(f)
+        except Exception:
+            return None
+    return None
+
+
+def _save_cache(sha: str, data):
+    path = CACHE_DIR / f"{sha}.pkl"
+    try:
+        with open(path, "wb") as f:
+            pickle.dump(data, f)
+    except Exception:
+        # Cache failures should never break the run
+        pass
+
+
 def build_time_buckets(
     root: Path,
-    file_metrics,  # kept for backward compatibility, not used in v2
+    file_metrics,            # kept for CLI compatibility, not used here
     since: str = "2020-01-01",
 ) -> List[TimeBucketMetrics]:
     """
-    Build AI debt timeline using monthly snapshot sampling (v2).
+    Build AI debt timeline using monthly snapshot sampling + per-commit cache.
 
     For each month between `since` and HEAD:
       - pick the last commit of that month
-      - checkout to that commit
-      - run scan_repo(root) to recompute AI debt at that time
+      - if we have cached (sum, avg) for that SHA, reuse it
+      - otherwise:
+          * checkout that commit
+          * run scan_repo(root)
+          * compute total/average AI debt
+          * save to .ai_debt_cache/<sha>.pkl
     """
-    root = Path(root)
+    root = Path(root).resolve()
 
-    # 1. 保存当前 HEAD，最后要切回去
+    # Save current HEAD so we can restore it later
     current_head = _run_git(root, ["rev-parse", "HEAD"])
 
-    # 2. 收集每个月的代表 commit
+    # Collect representative commits
     month_info = _collect_month_end_commits(root, since)
-
-    # 没有历史就直接返回空
     if not month_info:
         return []
 
-    # 3. 按时间顺序排序月份
     months_sorted = sorted(month_info.keys())
-
     buckets: List[TimeBucketMetrics] = []
 
     try:
@@ -96,20 +122,24 @@ def build_time_buckets(
             sha = info["sha"]
             commits_in_month = info["count"]
 
-            # 切到该月最后的 commit
-            subprocess.run(
-                ["git", "checkout", "--quiet", sha],
-                cwd=root,
-                stdout=subprocess.DEVNULL,
-                stderr=subprocess.DEVNULL,
-                check=True,
-            )
+            # 1) Try to load cached snapshot metrics
+            cached = _load_cache(sha)
+            if cached is not None:
+                total_debt, avg_debt = cached
+            else:
+                # 2) Checkout this snapshot and recompute
+                subprocess.run(
+                    ["git", "-C", str(root), "checkout", "--quiet", sha],
+                    stdout=subprocess.DEVNULL,
+                    stderr=subprocess.DEVNULL,
+                    check=True,
+                )
+                snapshot_files = scan_repo(root)
+                total_debt = sum(f.ai_debt_score for f in snapshot_files)
+                avg_debt = total_debt / len(snapshot_files) if snapshot_files else 0.0
 
-            # 对该快照重新分析整个仓库
-            snapshot_files = scan_repo(root)
-
-            total_debt = sum(f.ai_debt_score for f in snapshot_files)
-            avg_debt = total_debt / len(snapshot_files) if snapshot_files else 0.0
+                # 3) Save to cache
+                _save_cache(sha, (total_debt, avg_debt))
 
             buckets.append(
                 TimeBucketMetrics(
@@ -121,17 +151,16 @@ def build_time_buckets(
             )
 
     finally:
-        # 无论中间是否报错，都尝试切回原来的 HEAD
+        # Always try to restore original HEAD
         try:
             subprocess.run(
-                ["git", "checkout", "--quiet", current_head],
-                cwd=root,
+                ["git", "-C", str(root), "checkout", "--quiet", current_head],
                 stdout=subprocess.DEVNULL,
                 stderr=subprocess.DEVNULL,
                 check=True,
             )
         except Exception:
-            # 如果恢复失败，不再继续抛异常，以免把用户卡死
+            # Don't hard-fail if restore fails
             pass
 
     return buckets

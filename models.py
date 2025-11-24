@@ -65,3 +65,4 @@ class PRMetrics:
     ai_debt_delta: float
     ai_risk_index: float
     top_files: List[str]
+    semantic_drift: float = 0.0  # NEW: semantic drift score in [0, 1]

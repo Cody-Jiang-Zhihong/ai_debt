@@ -119,5 +119,6 @@ ai_debt_reports/
     timeline.csv
     prs.csv
     report.html
+```
 
 Open **report.html** to view the dashboard.

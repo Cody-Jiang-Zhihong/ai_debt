@@ -22,13 +22,13 @@ def export_csv(root: Path, files: List[FileMetrics], buckets: List[TimeBucketMet
                 f"{s.unnecessary_abstractions},{s.silent_failures},{fm.recent_added}\n"
             )
 
-    # timeline.csv（累计 AI debt）
+    # timeline.csv — cumulative AI debt
     with (reports_dir / "timeline.csv").open("w", encoding="utf-8") as f:
         f.write("bucket,ai_debt_sum,ai_debt_avg,commits\n")
         for b in buckets:
             f.write(f"{b.bucket},{b.ai_debt_sum:.3f},{b.ai_debt_avg:.3f},{b.commits}\n")
 
-    # timeline_monthly.csv - 每月新增 AI debt（非累计）
+    # timeline_monthly.csv — per-month new AI debt (non-cumulative)
     buckets_sorted = sorted(buckets, key=lambda b: b.bucket)
     prev_sum = 0.0
     with (reports_dir / "timeline_monthly.csv").open("w", encoding="utf-8") as f:
@@ -52,7 +52,6 @@ def export_csv(root: Path, files: List[FileMetrics], buckets: List[TimeBucketMet
     return reports_dir
 
 
-
 def render_html(
     root: Path,
     reports_dir: Path,
@@ -64,38 +63,30 @@ def render_html(
     root = root.resolve()
 
     # ------------------------------------------------------------------
-    # Module heatmap: group by first 1–2 components of *relative* path
+    # Module heatmap  —— 简化 & 稳定：按顶层目录分组
     # ------------------------------------------------------------------
     module_scores = {}
     file_rows = []
 
     for fm in files:
-        # Normalize to path relative to repo root
-        try:
-            rel_path = Path(fm.path).resolve().relative_to(root)
-            norm_path = str(rel_path).replace("\\", "/")
-        except ValueError:
-            # If file is outside the repo root, just use its name
-            norm_path = Path(fm.path).name
+        # fm.path 通常是 repo 内的相对路径
+        path = str(fm.path).replace("\\", "/").lstrip("./")
+        parts = path.split("/")
 
-        parts = norm_path.split("/")
-        if len(parts) >= 2:
-            module = "/".join(parts[:2])
-        elif parts:
-            module = parts[0]
+        if len(parts) > 1:
+            module = parts[0]        # 顶层文件夹：比如 "thefuck", "tests"
         else:
-            module = "(root)"
+            module = parts[0]        # 根目录文件：比如 "setup.py"
 
         s = fm.smell
 
-        if module not in module_scores:
-            module_scores[module] = {"sum": 0.0, "count": 0}
-        module_scores[module]["sum"] += fm.ai_debt_score
-        module_scores[module]["count"] += 1
+        info = module_scores.setdefault(module, {"sum": 0.0, "count": 0})
+        info["sum"] += fm.ai_debt_score
+        info["count"] += 1
 
         file_rows.append(
             {
-                "path": norm_path,
+                "path": path,
                 "module": module,
                 "loc": fm.loc,
                 "ai_influence": fm.ai_influence,
@@ -110,14 +101,16 @@ def render_html(
         )
 
     modules = list(module_scores.keys())
-    module_values = [module_scores[m]["sum"] / max(1, module_scores[m]["count"]) for m in modules]
+    module_values = [
+        module_scores[m]["sum"] / max(1, module_scores[m]["count"])
+        for m in modules
+    ]
 
     # ------------------------------------------------------------------
     # Time trend
     # ------------------------------------------------------------------
     buckets_sorted = sorted(buckets, key=lambda b: b.bucket)
     bucket_labels = [b.bucket for b in buckets_sorted]
-    #bucket_debt = [b.ai_debt_avg for b in buckets_sorted]
     bucket_debt = [b.ai_debt_sum for b in buckets_sorted]
 
     # Per-month new AI debt (non-cumulative)
@@ -137,9 +130,8 @@ def render_html(
     pr_drifts = [p.semantic_drift for p in prs_sorted]
 
     # ------------------------------------------------------------------
-    # HTML
+    # HTML / JS
     # ------------------------------------------------------------------
-    # Precompute JSON strings so we can safely concat into a plain Python string.
     modules_js = json.dumps(modules)
     module_values_js = json.dumps(module_values)
     filesdata_js = json.dumps(file_rows)
@@ -207,32 +199,30 @@ def render_html(
             "    // Heatmap\n"
             "    var heatData = [{\n"
             "      x: modules,\n"
-            "      y: ['AI Tech Debt'],\n"
-            "      z: moduleValues.map(v => [v]),\n"
+            "      y: ['AI Debt'],\n"
+            "      z: [moduleValues],\n"  # 1 row, N columns
             "      type: 'heatmap',\n"
-            "      colorscale: 'YlOrRd',\n"
-            "      showscale: true,\n"
+            "      colorscale: 'Reds',\n"
             "      hovertemplate: 'Module: %{x}<br>Avg AI debt: %{z:.3f}<extra></extra>'\n"
             "    }];\n\n"
-            "    Plotly.newPlot('heatmap', heatData, {\n"
-            "      title: 'Module-Level AI Debt Heatmap',\n"
-            "      xaxis: { title: 'Module' },\n"
-            "      yaxis: { visible: false }\n"
-            "    });\n\n"
-            "    // Module detail rendering (top 10 files by AI debt)\n"
+            "    var heatLayout = {\n"
+            "      title: 'Module AI Tech Debt Heatmap',\n"
+            "      xaxis: { automargin: true },\n"
+            "      yaxis: { automargin: true }\n"
+            "    };\n\n"
+            "    Plotly.newPlot('heatmap', heatData, heatLayout);\n\n"
+            "    // Drill-down\n"
             "    function renderModuleDetail(moduleName) {\n"
             "      var container = document.getElementById('module-detail');\n"
-            "      var rows = filesData.filter(function (r) {\n"
-            "        return r.module === moduleName;\n"
-            "      });\n\n"
+            "      var rows = filesData.filter(function (f) {\n"
+            "        return f.module === moduleName;\n"
+            "      });\n"
             "      if (!rows.length) {\n"
-            "        container.innerHTML = \"<h3>Module \" + moduleName + \"</h3><p>No files found.</p>\";\n"
+            "        container.innerHTML = '<h3>Module ' + moduleName + '</h3><p>No files found.</p>';\n"
             "        return;\n"
-            "      }\n\n"
-            "      rows.sort(function (a, b) {\n"
-            "        return b.ai_debt - a.ai_debt;\n"
-            "      });\n\n"
-            "      var top = rows.slice(0, 10);\n\n"
+            "      }\n"
+            "      rows.sort(function (a, b) { return b.ai_debt - a.ai_debt; });\n"
+            "      var top = rows.slice(0, 10);\n"
             "      var dupSum = 0, apiSum = 0, overSum = 0, absSum = 0, silentSum = 0, avgDebt = 0;\n"
             "      top.forEach(function (r) {\n"
             "        dupSum += r.dup;\n"
@@ -242,7 +232,7 @@ def render_html(
             "        silentSum += r.silent;\n"
             "        avgDebt += r.ai_debt;\n"
             "      });\n"
-            "      avgDebt = avgDebt / top.length;\n\n"
+            "      avgDebt = avgDebt / top.length;\n"
             "      var summary = `\n"
             "        <h3>Module ${moduleName} · Top 10 Debt Files</h3>\n"
             "        <p>\n"
@@ -254,19 +244,14 @@ def render_html(
             "          <b>${apiSum}</b> API hallucinations.\n"
             "          Avg AI debt score <b>${avgDebt.toFixed(2)}</b>。\n"
             "        </p>\n"
-            "      `;\n\n"
+            "      `;\n"
             "      var tableRows = top.map(function (r, idx) {\n"
-            "        var riskClass = \"low-risk\";\n"
-            "        var riskLabel = \"\";\n"
-            "        if (r.ai_debt > 0.8) {\n"
-            "          riskClass = \"high-risk\";\n"
-            "          riskLabel = \"🔥 AI High Risk\";\n"
-            "        } else if (r.ai_debt > 0.6) {\n"
-            "          riskClass = \"mid-risk\";\n"
-            "          riskLabel = \"⚠ Moderate Risk\";\n"
-            "        }\n"
+            "        var riskClass = 'low-risk';\n"
+            "        var riskLabel = '';\n"
+            "        if (r.ai_debt > 0.8) { riskClass = 'high-risk'; riskLabel = '🔥 AI High Risk'; }\n"
+            "        else if (r.ai_debt > 0.6) { riskClass = 'mid-risk'; riskLabel = '⚠ Moderate Risk'; }\n"
             "        return `\n"
-            "          <tr class=\"${riskClass}\">\n"
+            "          <tr class='${riskClass}'>\n"
             "            <td>${idx + 1}</td>\n"
             "            <td>${r.path}</td>\n"
             "            <td>${r.loc}</td>\n"
@@ -277,12 +262,11 @@ def render_html(
             "            <td>${r.over_eng}</td>\n"
             "            <td>${r.unnecessary_abs}</td>\n"
             "            <td>${r.silent}</td>\n"
-            "          </tr>\n"
-            "        `;\n"
-            "      }).join('\\n');\n\n"
+            "          </tr>`;\n"
+            "      }).join('\\n');\n"
             "      var tableHtml = `\n"
             "        ${summary}\n"
-            "        <table class=\"detail-table\">\n"
+            "        <table class='detail-table'>\n"
             "          <thead>\n"
             "            <tr>\n"
             "              <th>#</th>\n"
@@ -300,61 +284,41 @@ def render_html(
             "          <tbody>\n"
             "            ${tableRows}\n"
             "          </tbody>\n"
-            "        </table>\n"
-            "      `;\n\n"
+            "        </table>`;\n"
             "      container.innerHTML = tableHtml;\n"
-            "    }\n\n"
+            "    }\n"
             "    var heatDiv = document.getElementById('heatmap');\n"
             "    heatDiv.on('plotly_click', function(data) {\n"
             "      if (data.points && data.points.length > 0) {\n"
             "        var moduleName = data.points[0].x;\n"
             "        renderModuleDetail(moduleName);\n"
             "      }\n"
-            "    });\n\n"
-            "    if (modules.length > 0) {\n"
-            "      renderModuleDetail(modules[0]);\n"
-            "    }\n\n"
+            "    });\n"
+            "    if (modules.length > 0) { renderModuleDetail(modules[0]); }\n\n"
             "    // Timeline\n"
             "    var tlData = [\n"
-            "      {\n"
-            "        x: bucketLabels,\n"
-            "        y: bucketDebt,\n"
-            "        type: 'scatter',\n"
-            "        mode: 'lines+markers',\n"
-            "        name: 'Cumulative AI debt'\n"
-            "      },\n"
-            "      {\n"
-            "        x: bucketLabels,\n"
-            "        y: bucketDelta,\n"
-            "        type: 'bar',\n"
-            "        name: 'Monthly new AI debt'\n"
-            "      }\n"
-            "    ];\n\n"
-            "    var tlLayout = { title: 'AI Debt Trend Over Time' };\n\n"
-            "    Plotly.newPlot('timeline', tlData, tlLayout);\n\n"
+            "      { x: bucketLabels, y: bucketDebt, type: 'scatter', mode: 'lines+markers', name: 'Cumulative AI debt' },\n"
+            "      { x: bucketLabels, y: bucketDelta, type: 'bar', name: 'Monthly new AI debt' }\n"
+            "    ];\n"
+            "    Plotly.newPlot('timeline', tlData, { title: 'AI Debt Trend Over Time' });\n"
             "    function setTimelineMode(mode) {\n"
             "      if (mode === 'cumulative') {\n"
             "        Plotly.restyle('timeline', {visible: [true, false]});\n"
-            "      } else if (mode === 'monthly') {\n"
+            "      } else {\n"
             "        Plotly.restyle('timeline', {visible: [false, true]});\n"
             "      }\n"
-            "    }\n\n"
-            "    // initial state\n"
-            "    setTimelineMode('cumulative');\n\n"
+            "    }\n"
+            "    setTimelineMode('cumulative');\n"
             "    var radios = document.getElementsByName('timelineMode');\n"
             "    for (var i = 0; i < radios.length; i++) {\n"
-            "      radios[i].addEventListener('change', function (e) {\n"
-            "        setTimelineMode(e.target.value);\n"
-            "      });\n"
+            "      radios[i].addEventListener('change', function (e) { setTimelineMode(e.target.value); });\n"
             "    }\n\n"
-            "    // -------------------------------\n"
-            "    // PR Risk + Drift Coloring\n"
-            "    // -------------------------------\n"
+            "    // PR Risk\n"
             "    var prData = [{\n"
             "      x: prIds,\n"
             "      y: prRisks,\n"
             "      type: 'bar',\n"
-            "      customdata: prDrifts,  // Apply drift to each bar\n"
+            "      customdata: prDrifts,\n"
             "      marker: {\n"
             "        color: prDrifts,\n"
             "        colorscale: 'RdBu',\n"
@@ -363,14 +327,9 @@ def render_html(
             "        cmax: 1,\n"
             "        colorbar: { title: 'Semantic Drift' }\n"
             "      },\n"
-            "      hovertemplate:\n"
-            "        \"PR: %{x}<br>\" +\n"
-            "        \"Risk: %{y:.2f}<br>\" +\n"
-            "        \"Semantic drift: %{customdata:.2f}<extra></extra>\"\n"
-            "    }];\n\n"
-            "    Plotly.newPlot('prrisk', prData, {\n"
-            "      title: 'PR Risk Index (Semantic Drift Colored)'\n"
-            "    });\n\n\n"
+            "      hovertemplate: 'PR: %{x}<br>Risk: %{y:.2f}<br>Semantic drift: %{customdata:.2f}<extra></extra>'\n"
+            "    }];\n"
+            "    Plotly.newPlot('prrisk', prData, { title: 'PR Risk Index (Semantic Drift Colored)' });\n"
             "  </script>\n"
             "</body>\n"
             "</html>\n"

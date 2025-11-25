@@ -3,7 +3,8 @@
 import argparse
 from pathlib import Path
 from scanner import scan_repo
-from timeline import build_time_buckets
+# from timeline import build_time_buckets
+from diff_timeline import build_diff_timeline
 from pr_analysis import build_pr_metrics
 from visualize import export_csv, render_html
 
@@ -20,8 +21,11 @@ def main():
     print("📁 Scanning repository...")
     file_metrics = scan_repo(root)
 
-    print("📈 Building time buckets...")
-    bucket_metrics = build_time_buckets(root, file_metrics, since=args.since)
+    #print("📈 Building time buckets...")
+    #bucket_metrics = build_time_buckets(root, file_metrics, since=args.since)
+    print("📈 Building incremental diff-based timeline...")
+    bucket_metrics = build_diff_timeline(root, since=args.since)
+
 
     print("🔍 Computing PR risk metrics...")
     pr_metrics = build_pr_metrics(root, file_metrics, since=args.since)

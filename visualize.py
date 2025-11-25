@@ -22,11 +22,21 @@ def export_csv(root: Path, files: List[FileMetrics], buckets: List[TimeBucketMet
                 f"{s.unnecessary_abstractions},{s.silent_failures},{fm.recent_added}\n"
             )
 
-    # timeline.csv
+    # timeline.csv（累计 AI debt）
     with (reports_dir / "timeline.csv").open("w", encoding="utf-8") as f:
         f.write("bucket,ai_debt_sum,ai_debt_avg,commits\n")
         for b in buckets:
             f.write(f"{b.bucket},{b.ai_debt_sum:.3f},{b.ai_debt_avg:.3f},{b.commits}\n")
+
+    # timeline_monthly.csv - 每月新增 AI debt（非累计）
+    buckets_sorted = sorted(buckets, key=lambda b: b.bucket)
+    prev_sum = 0.0
+    with (reports_dir / "timeline_monthly.csv").open("w", encoding="utf-8") as f:
+        f.write("bucket,ai_debt_delta,commits\n")
+        for b in buckets_sorted:
+            delta = b.ai_debt_sum - prev_sum
+            prev_sum = b.ai_debt_sum
+            f.write(f"{b.bucket},{delta:.3f},{b.commits}\n")
 
     # prs.csv
     with (reports_dir / "prs.csv").open("w", encoding="utf-8") as f:
@@ -39,8 +49,8 @@ def export_csv(root: Path, files: List[FileMetrics], buckets: List[TimeBucketMet
                 f"{p.semantic_drift:.3f},{top}\n"
             )
 
-
     return reports_dir
+
 
 
 def render_html(
@@ -65,6 +75,7 @@ def render_html(
             rel_path = Path(fm.path).resolve().relative_to(root)
             norm_path = str(rel_path).replace("\\", "/")
         except ValueError:
+            # If file is outside the repo root, just use its name
             norm_path = Path(fm.path).name
 
         parts = norm_path.split("/")
@@ -75,23 +86,26 @@ def render_html(
         else:
             module = "(root)"
 
-        info = module_scores.setdefault(module, {"sum": 0.0, "count": 0})
-        info["sum"] += fm.ai_debt_score
-        info["count"] += 1
-
         s = fm.smell
+
+        if module not in module_scores:
+            module_scores[module] = {"sum": 0.0, "count": 0}
+        module_scores[module]["sum"] += fm.ai_debt_score
+        module_scores[module]["count"] += 1
+
         file_rows.append(
             {
                 "path": norm_path,
                 "module": module,
                 "loc": fm.loc,
-                "ai_debt": fm.ai_debt_score,
                 "ai_influence": fm.ai_influence,
+                "ai_debt": fm.ai_debt_score,
                 "dup": s.duplicate_blocks,
                 "api": s.api_hallucinations,
                 "over_eng": s.over_engineering,
                 "unnecessary_abs": s.unnecessary_abstractions,
                 "silent": s.silent_failures,
+                "recent_added": fm.recent_added,
             }
         )
 
@@ -103,7 +117,16 @@ def render_html(
     # ------------------------------------------------------------------
     buckets_sorted = sorted(buckets, key=lambda b: b.bucket)
     bucket_labels = [b.bucket for b in buckets_sorted]
-    bucket_debt = [b.ai_debt_avg for b in buckets_sorted]
+    #bucket_debt = [b.ai_debt_avg for b in buckets_sorted]
+    bucket_debt = [b.ai_debt_sum for b in buckets_sorted]
+
+    # Per-month new AI debt (non-cumulative)
+    bucket_delta = []
+    prev_sum = 0.0
+    for b in buckets_sorted:
+        delta = b.ai_debt_sum - prev_sum
+        bucket_delta.append(delta)
+        prev_sum = b.ai_debt_sum
 
     # ------------------------------------------------------------------
     # PR risk
@@ -122,6 +145,7 @@ def render_html(
     filesdata_js = json.dumps(file_rows)
     bucket_labels_js = json.dumps(bucket_labels)
     bucket_debt_js = json.dumps(bucket_debt)
+    bucket_delta_js = json.dumps(bucket_delta)
     pr_ids_js = json.dumps(pr_ids)
     pr_risks_js = json.dumps(pr_risks)
     pr_drifts_js = json.dumps(pr_drifts)
@@ -162,6 +186,10 @@ def render_html(
             "    <p>💡 Click any module above to see its top 10 highest-debt files.</p>\n"
             "  </div>\n\n"
             "  <h2>AI Debt Trend Over Time</h2>\n"
+            "  <div id=\"timeline-toggle\" style=\"margin-bottom: 8px;\">\n"
+            "    <label><input type=\"radio\" name=\"timelineMode\" value=\"cumulative\" checked> Cumulative</label>\n"
+            "    <label style=\"margin-left: 12px;\"><input type=\"radio\" name=\"timelineMode\" value=\"monthly\"> Monthly new</label>\n"
+            "  </div>\n"
             "  <div id=\"timeline\" class=\"chart\"></div>\n\n"
             "  <h2>PR Risk Index (Top)</h2>\n"
             "  <div id=\"prrisk\" class=\"chart\"></div>\n\n"
@@ -172,29 +200,30 @@ def render_html(
             "    var filesData = " + filesdata_js + ";\n"
             "    var bucketLabels = " + bucket_labels_js + ";\n"
             "    var bucketDebt = " + bucket_debt_js + ";\n"
+            "    var bucketDelta = " + bucket_delta_js + ";\n"
             "    var prIds = " + pr_ids_js + ";\n"
             "    var prRisks = " + pr_risks_js + ";\n"
             "    var prDrifts = " + pr_drifts_js + ";\n\n"
             "    // Heatmap\n"
             "    var heatData = [{\n"
             "      x: modules,\n"
-            "      y: ['AI Debt'],\n"
-            "      z: [moduleValues],\n"
+            "      y: ['AI Tech Debt'],\n"
+            "      z: moduleValues.map(v => [v]),\n"
             "      type: 'heatmap',\n"
-            "      colorscale: 'Reds',\n"
-            "      hovertemplate: \"Module: {x}<br>Avg AI Debt: {z:.2f}<extra></extra>\"\n"
+            "      colorscale: 'YlOrRd',\n"
+            "      showscale: true,\n"
+            "      hovertemplate: 'Module: %{x}<br>Avg AI debt: %{z:.3f}<extra></extra>'\n"
             "    }];\n\n"
-            "    var heatLayout = {\n"
-            "      title: 'Module AI Tech Debt Heatmap',\n"
-            "      xaxis: { automargin: true },\n"
-            "      yaxis: { automargin: true }\n"
-            "    };\n\n"
-            "    Plotly.newPlot('heatmap', heatData, heatLayout);\n\n"
-            "    // Drill-down\n"
+            "    Plotly.newPlot('heatmap', heatData, {\n"
+            "      title: 'Module-Level AI Debt Heatmap',\n"
+            "      xaxis: { title: 'Module' },\n"
+            "      yaxis: { visible: false }\n"
+            "    });\n\n"
+            "    // Module detail rendering (top 10 files by AI debt)\n"
             "    function renderModuleDetail(moduleName) {\n"
-            "      var container = document.getElementById('module-detail');\n\n"
-            "      var rows = filesData.filter(function (f) {\n"
-            "        return f.module === moduleName;\n"
+            "      var container = document.getElementById('module-detail');\n"
+            "      var rows = filesData.filter(function (r) {\n"
+            "        return r.module === moduleName;\n"
             "      });\n\n"
             "      if (!rows.length) {\n"
             "        container.innerHTML = \"<h3>Module \" + moduleName + \"</h3><p>No files found.</p>\";\n"
@@ -235,13 +264,14 @@ def render_html(
             "        } else if (r.ai_debt > 0.6) {\n"
             "          riskClass = \"mid-risk\";\n"
             "          riskLabel = \"⚠ Moderate Risk\";\n"
-            "        }\n\n"
+            "        }\n"
             "        return `\n"
             "          <tr class=\"${riskClass}\">\n"
             "            <td>${idx + 1}</td>\n"
             "            <td>${r.path}</td>\n"
-            "            <td>${r.ai_debt.toFixed(2)}</td>\n"
-            "            <td>${riskLabel}</td>\n"
+            "            <td>${r.loc}</td>\n"
+            "            <td>${r.ai_influence.toFixed(2)}</td>\n"
+            "            <td>${r.ai_debt.toFixed(2)} ${riskLabel}</td>\n"
             "            <td>${r.dup}</td>\n"
             "            <td>${r.api}</td>\n"
             "            <td>${r.over_eng}</td>\n"
@@ -249,7 +279,7 @@ def render_html(
             "            <td>${r.silent}</td>\n"
             "          </tr>\n"
             "        `;\n"
-            "      }).join(\"\");\n\n"
+            "      }).join('\\n');\n\n"
             "      var tableHtml = `\n"
             "        ${summary}\n"
             "        <table class=\"detail-table\">\n"
@@ -257,11 +287,12 @@ def render_html(
             "            <tr>\n"
             "              <th>#</th>\n"
             "              <th>File</th>\n"
+            "              <th>LOC</th>\n"
+            "              <th>AI Influence</th>\n"
             "              <th>AI Debt</th>\n"
-            "              <th>Tag</th>\n"
-            "              <th>Duplicate</th>\n"
-            "              <th>API Hallucination</th>\n"
-            "              <th>Over-engineering</th>\n"
+            "              <th>Duplicate Blocks</th>\n"
+            "              <th>API Hallucinations</th>\n"
+            "              <th>Over-Engineering</th>\n"
             "              <th>Unnecessary Abstraction</th>\n"
             "              <th>Silent Failure</th>\n"
             "            </tr>\n"
@@ -284,13 +315,38 @@ def render_html(
             "      renderModuleDetail(modules[0]);\n"
             "    }\n\n"
             "    // Timeline\n"
-            "    var tlData = [{\n"
-            "      x: bucketLabels,\n"
-            "      y: bucketDebt,\n"
-            "      type: 'scatter',\n"
-            "      mode: 'lines+markers'\n"
-            "    }];\n\n"
-            "    Plotly.newPlot('timeline', tlData, {title: 'AI Debt Trend Over Time'});\n\n"
+            "    var tlData = [\n"
+            "      {\n"
+            "        x: bucketLabels,\n"
+            "        y: bucketDebt,\n"
+            "        type: 'scatter',\n"
+            "        mode: 'lines+markers',\n"
+            "        name: 'Cumulative AI debt'\n"
+            "      },\n"
+            "      {\n"
+            "        x: bucketLabels,\n"
+            "        y: bucketDelta,\n"
+            "        type: 'bar',\n"
+            "        name: 'Monthly new AI debt'\n"
+            "      }\n"
+            "    ];\n\n"
+            "    var tlLayout = { title: 'AI Debt Trend Over Time' };\n\n"
+            "    Plotly.newPlot('timeline', tlData, tlLayout);\n\n"
+            "    function setTimelineMode(mode) {\n"
+            "      if (mode === 'cumulative') {\n"
+            "        Plotly.restyle('timeline', {visible: [true, false]});\n"
+            "      } else if (mode === 'monthly') {\n"
+            "        Plotly.restyle('timeline', {visible: [false, true]});\n"
+            "      }\n"
+            "    }\n\n"
+            "    // initial state\n"
+            "    setTimelineMode('cumulative');\n\n"
+            "    var radios = document.getElementsByName('timelineMode');\n"
+            "    for (var i = 0; i < radios.length; i++) {\n"
+            "      radios[i].addEventListener('change', function (e) {\n"
+            "        setTimelineMode(e.target.value);\n"
+            "      });\n"
+            "    }\n\n"
             "    // -------------------------------\n"
             "    // PR Risk + Drift Coloring\n"
             "    // -------------------------------\n"

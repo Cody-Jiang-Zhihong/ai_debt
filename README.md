@@ -1,124 +1,180 @@
-# AI Debt Analyzer  
-**A Technical Debt Analysis System Designed for AI-Generated Code**
+# AI Debt Analyzer
+**A Technical Debt Analysis System Designed for AI‑Generated Code**
 
-AI accelerates development — but also accelerates the creation of **structural technical debt**.  
-AI-generated code often contains duplicated logic, unnecessary abstractions, hallucinated APIs, and fragile error handling that compound over time.
+AI accelerates development — but it also accelerates the creation of **structural technical debt**.  
+AI‑generated code frequently introduces duplicated logic, unnecessary abstractions, hallucinated APIs, and fragile error‑handling that silently accumulates over time.
 
-**AI Debt Analyzer** is built specifically for engineering teams operating in the AI era.  
-It answers critical questions such as:
+**AI Debt Analyzer** is a full‑stack static analysis + temporal intelligence system designed for modern engineering teams using AI‑assisted coding.
 
-- Which modules are becoming **“AI code dumps”** over time?  
-- How much technical debt did AI-generated code introduce?  
-- Which PRs are structurally risky?  
-- Which files should be refactoring priorities?
+It answers questions such as:
 
-Designed for backend teams, AI engineering organizations, data engineering teams, and any company scaling AI-assisted coding.
+- Which modules are turning into **AI‑generated code dumps**?
+- How much structural debt did AI introduce over time?
+- Which PRs are risky?
+- Which files should be prioritized for refactoring?
+- How is AI code affecting long‑term maintainability?
 
 ---
 
-## ✨ Features
+## ✨ Key Features
 
-### 🔥 1. AI Tech Debt Heatmap (Module-Level)
+### 🔥 1. Module‑Level AI Debt Heatmap
+Aggregates code at the first two directory levels and computes a normalized **AI Debt Score**.
 
-Automatically aggregates the first two directory levels and computes the **AI Debt Score** for each module.
+Identifies:
 
-Helps identify:
-
-- High-risk modules  
-- Hotspots caused by AI code generation  
+- High‑risk modules  
+- AI‑generated hotspots  
 - Areas requiring immediate refactoring  
 
-Clicking on any module reveals the **Top 10 most risky files**.
+Click on any module to reveal its **Top 10 highest‑debt files**.
 
 ---
 
-### 🔍 2. File-Level Drill-Down (Top 10 Risk Files)
+### 🔍 2. File‑Level Drill‑Down (Top 10 Risk Files)
 
-For each module, the system displays:
+Each file includes:
 
-- The 10 files with the highest AI Debt Score  
-- Full breakdown of **five AI Code Smells**  
-- Human-readable explanations  
-  - “AI-generated wrapper explosion”  
-  - “silent exception swallowing”  
-  - “hallucinated API patterns”, etc.  
-- Visual risk tags  
-  - 🔥 *AI Dump Candidate*  
-  - ⚠️ *Needs Attention*
+- Line count  
+- AI Influence Score  
+- AI Debt Score  
+- Full breakdown of **five AI Code Smells**:
+  - Duplicate Logic
+  - API Hallucinations
+  - Over‑Engineering Wrappers
+  - Unnecessary Abstractions
+  - Silent Failure Patterns
+
+Includes human‑readable explanations and visual risk tags, such as:
+
+- 🔥 *AI Dump Candidate*  
+- ⚠️ *Needs Attention*  
 
 ---
 
-### ⏳ 3. Historical AI Debt Trend (Monthly Snapshots)
+### ⏳ 3. Historical AI Debt Trend (Two Modes)
 
-We use an innovative **end-of-month snapshot algorithm**:
+The system provides **two switchable time‑series charts**:
 
+#### **A. Cumulative AI Debt Over Time**
+Built using the **end‑of‑month snapshot algorithm**:
 1. Identify the last commit of each month  
-2. Perform a full static analysis on that snapshot  
-3. Plot AI Debt evolution over time  
+2. Perform a full static analysis  
+3. Plot the cumulative debt score  
 
-This reveals:
+Shows:
+- When AI debt spiked  
+- Effects of rewrites / migrations  
+- Long‑term stability vs deterioration  
 
-- When AI debt started accumulating  
-- Effects of migrations, rewrites, major features  
-- Whether the codebase is stabilizing or degrading  
+#### **B. Monthly New AI Debt (Non‑Cumulative)**
+Shows debt *introduced* in each month.  
+Reveals patterns such as:
+- AI‑heavy feature bursts  
+- Stable vs risky development periods  
 
 ---
 
-### 🧩 4. PR Risk Index
+### 🧩 4. PR Risk Index + Semantic Drift
 
-For each merge commit / PR, we compute:
+For each PR / merge commit, the system computes:
 
 - Files touched  
 - Lines added  
-- Existing debt in each modified file  
-- A normalized **0–1 risk index**
+- AI Debt Delta  
+- Semantic Drift Score  
+- A normalized **0–1 AI Risk Index**
 
-Helps engineering leads pinpoint:
+Useful for identifying:
 
-- Risky contributors  
-- PRs likely to introduce structural decay  
-- High-impact debt events  
+- High‑risk PRs  
+- Contributors introducing AI‑heavy unstable code  
+- “Silent refactoring bombs” that degrade structure  
 
 ---
 
-## ⚙️ Technical Architecture (Summary)
+## ⚙️ Technical Architecture
 
-### 1. Whole-Repository Static Analysis  
-AST-based feature extraction:
+### 1. Static Analysis Engine
+AST‑based structural feature extraction:
 
-- Structural complexity  
-- Repeated logic (shingle-based duplication detection)  
-- Wrapper overuse  
-- Invalid/misused APIs (hallucinations)  
-- Silent failure patterns  
+- Cyclomatic & structural complexity  
+- Block‑level shingle duplication detection  
+- Wrapper/abstraction misuse  
+- API hallucination heuristics  
+- Silent failure pattern detection  
 
 ### 2. Five AI Code Smells
-
 - **Duplicate Blocks**  
 - **API Hallucinations**  
-- **Over-engineering Wrappers**  
+- **Over‑Engineering Wrappers**  
 - **Unnecessary Abstractions**  
-- **Silent Failures**
+- **Silent Failures**  
 
-### 3. Two Core Scores
-
-- **AI Influence Score** — likelihood of AI origin  
-- **AI Debt Score** — normalized structural risk (0–1)  
+### 3. Core Metrics
+- **AI Influence Score** — likelihood of AI‑generated origin  
+- **AI Debt Score** — normalized debt index (0–1)  
 
 ---
 
-## 🚀 Install & Run
+## 📊 Outputs
 
-```bash
-pip install ai_debt
-python -m ai_debt.cli --repo /path/to/repo --since 2015-01-01
+After scanning, the system generates:
 
-Outputs to:
+```
 ai_debt_reports/
-    files.csv
-    timeline.csv
-    prs.csv
-    report.html
+│   files.csv               # Per‑file AI metrics
+│   timeline.csv            # Cumulative monthly AI debt
+│   timeline_monthly.csv    # Monthly new AI debt (non‑cumulative)
+│   prs.csv                 # PR‑level risk & drift
+│   report.html             # Full interactive dashboard
 ```
 
-Open **report.html** to view the dashboard.
+Open **report.html** to explore the visual analytics dashboard.
+
+---
+
+## 🚀 Installation & Usage
+
+### Install
+```bash
+pip install ai_debt
+```
+
+### Run
+```bash
+python -m ai_debt.cli --repo /path/to/repo --since 2015-01-01
+```
+
+Then open:
+```
+ai_debt_reports/report.html
+```
+
+---
+
+## 🛠️ Intended Users
+
+- Backend engineering teams  
+- Platform & infrastructure groups  
+- AI‑product engineering orgs  
+- Data engineering teams  
+- CTOs & tech leads managing AI‑assisted development  
+
+---
+
+## 📘 Why This Matters
+
+AI code generation is fast.  
+But **uncontrolled AI code generation is one of the fastest ways to accumulate structural technical debt**.
+
+AI Debt Analyzer gives engineering leaders visibility into:
+
+- Where AI code is creeping in  
+- How it’s shaping the codebase  
+- Where refactoring budgets should be spent  
+- How PRs impact long‑term maintainability  
+
+This creates a feedback loop for **responsible, observable, and sustainable use of AI coding tools**.
+
+---

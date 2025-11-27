@@ -16,6 +16,10 @@ It answers questions such as:
 
 ---
 
+**Dashboard Screenshot:**  
+![Dashboard Screenshot 1](./screenshots/ex1.png)
+![Dashboard Screenshot 2](./screenshots/ex2.png)
+
 ## ✨ Key Features
 
 ### 🔥 1. Module‑Level AI Debt Heatmap
@@ -136,14 +140,10 @@ Open **report.html** to explore the visual analytics dashboard.
 
 ## 🚀 Installation & Usage
 
-### Install
-```bash
-pip install ai_debt
-```
 
 ### Run
 ```bash
-python -m ai_debt.cli --repo /path/to/repo --since 2015-01-01
+python cli.py --repo /path/to/repo --since 2020-01-01
 ```
 
 Then open:
